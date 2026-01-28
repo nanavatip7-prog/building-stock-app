@@ -1,77 +1,122 @@
+console.log("🚀 Server starting...");
+
 const express = require("express");
 const mysql = require("mysql2");
+const cors = require("cors");
 const path = require("path");
 
 const app = express();
-const PORT = process.env.PORT || 4000;
-
-// Middleware
+app.use(cors());
 app.use(express.json());
+
+// ===============================
+// SERVE FRONTEND
+// ===============================
 app.use(express.static(path.join(__dirname, "public")));
 
-// ✅ MySQL connection using Railway URL
+// ===============================
+// MYSQL CONNECTION (RAILWAY)
+// ===============================
+if (!process.env.MYSQL_URL) {
+  console.error("❌ MYSQL_URL not found in environment variables");
+  process.exit(1);
+}
+
 const db = mysql.createPool(process.env.MYSQL_URL);
 
-// Test DB connection
-db.getConnection((err, conn) => {
+db.getConnection((err, connection) => {
   if (err) {
-    console.error("❌ MySQL connection failed:", err.message);
-  } else {
-    console.log("✅ MySQL connected");
-    conn.release();
+    console.error("❌ MySQL Connection Failed:", err.message);
+    process.exit(1);
   }
+  console.log("✅ Connected to Railway MySQL");
+  connection.release();
 });
 
-// =======================
+// ===============================
 // API ROUTES
-// =======================
+// ===============================
 
-// Get stock
+// Health check
+app.get("/api/health", (req, res) => {
+  res.json({ status: "OK" });
+});
+
+// Fetch stock
 app.get("/api/stock", (req, res) => {
-  const sql = "SELECT * FROM products ORDER BY display_name";
-  db.query(sql, (err, rows) => {
-    if (err) return res.status(500).json(err);
+  const query = `
+    SELECT 
+      p.id,
+      p.name AS product,
+      p.unit,
+      s.quantity AS stock
+    FROM products p
+    LEFT JOIN stock s ON p.id = s.product_id
+    ORDER BY p.name
+  `;
+
+  db.query(query, (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Database error" });
+    }
     res.json(rows);
   });
 });
 
 // Purchase (increase stock)
 app.post("/api/purchase", (req, res) => {
-  const { product_id, quantity, dealer_name } = req.body;
+  const { product_id, quantity } = req.body;
+
+  if (!product_id || !quantity) {
+    return res.status(400).json({ message: "Invalid input" });
+  }
 
   db.query(
-    "INSERT INTO purchases (product_id, quantity, dealer_name) VALUES (?, ?, ?)",
-    [product_id, quantity, dealer_name],
-    () => {
-      db.query(
-        "UPDATE products SET stock = stock + ? WHERE id = ?",
-        [quantity, product_id],
-        () => res.json({ success: true })
-      );
+    `INSERT INTO stock (product_id, quantity)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE quantity = quantity + ?`,
+    [product_id, quantity, quantity],
+    err => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: "Database error" });
+      }
+      res.json({ message: "Purchase recorded" });
     }
   );
 });
 
 // Sale (decrease stock)
 app.post("/api/sale", (req, res) => {
-  const { product_id, quantity, customer_name } = req.body;
+  const { product_id, quantity } = req.body;
+
+  if (!product_id || !quantity) {
+    return res.status(400).json({ message: "Invalid input" });
+  }
 
   db.query(
-    "INSERT INTO sales (product_id, quantity, customer_name) VALUES (?, ?, ?)",
-    [product_id, quantity, customer_name],
-    () => {
-      db.query(
-        "UPDATE products SET stock = stock - ? WHERE id = ?",
-        [quantity, product_id],
-        () => res.json({ success: true })
-      );
+    `UPDATE stock SET quantity = quantity - ?
+     WHERE product_id = ? AND quantity >= ?`,
+    [quantity, product_id, quantity],
+    (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: "Database error" });
+      }
+      if (result.affectedRows === 0) {
+        return res.status(400).json({ message: "Insufficient stock" });
+      }
+      res.json({ message: "Sale recorded" });
     }
   );
 });
 
-// =======================
+// ===============================
 // START SERVER
-// =======================
+// ===============================
+const PORT = process.env.PORT || 4000;
+
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
