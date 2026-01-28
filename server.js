@@ -1,3 +1,13 @@
+app.get("/api/debug-db", (req, res) => {
+  res.json({
+    host: process.env.MYSQLHOST,
+    user: process.env.MYSQLUSER,
+    database: process.env.MYSQLDATABASE,
+    port: process.env.MYSQLPORT,
+    hasPassword: !!process.env.MYSQLPASSWORD
+  });
+});
+
 const express = require("express");
 const mysql = require("mysql2");
 const path = require("path");
