@@ -56,28 +56,29 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log("🚀 Server running on port", PORT);
 });
+
 app.post("/api/purchase", async (req, res) => {
-  const { product_id, quantity, dealer_name } = req.body;
+  const { product_id, quantity } = req.body;
 
   if (!product_id || !quantity || quantity <= 0) {
     return res.status(400).json({ error: "Invalid input" });
   }
 
   try {
-    // 1. Increase stock
+    // 1. Update stock
     await db.query(
       "UPDATE stock SET quantity = quantity + ? WHERE product_id = ?",
       [quantity, product_id]
     );
 
-    // 2. Insert transaction
+    // 2. Insert transaction WITH created_at
     await db.query(
-      `INSERT INTO transactions (product_id, type, quantity, dealer_name)
-       VALUES (?, 'purchase', ?, ?)`,
-      [product_id, quantity, dealer_name || null]
+      `INSERT INTO transactions (product_id, type, quantity, created_at)
+       VALUES (?, 'purchase', ?, NOW())`,
+      [product_id, quantity]
     );
 
-    res.json({ success: true, message: "Purchase added successfully" });
+    res.json({ success: true });
 
   } catch (err) {
     console.error("PURCHASE ERROR:", err);
