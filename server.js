@@ -1,53 +1,58 @@
-console.log("🔥 ACTIVE server.js loaded");
+// ================== SERVER.JS (RAILWAY SAFE) ==================
 
 const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
 
 const app = express();
+
+// ---------- MIDDLEWARE ----------
 app.use(cors());
 app.use(express.json());
+app.use(express.static("public")); // serves index.html
 
-// ================== SERVE FRONTEND ==================
-app.use(express.static("public"));
-
-// ================== DATABASE CONFIG ==================
-// ⚠️ For now this still points to local DB (OK for testing)
-// Later we will move this to Railway MySQL
-
-const db = mysql.createConnection({
-  host: "localhost",
-  user: "root",
-  password: "Parth9850@#",
-  database: "stockdb"
+// ---------- DATABASE (ENV BASED) ----------
+const db = mysql.createPool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-// ⚠️ DO NOT crash server if DB fails
-db.connect(err => {
+// Test DB connection (SAFE – won’t crash app)
+db.getConnection((err, connection) => {
   if (err) {
-    console.error("❌ MySQL connection failed (app still running)");
+    console.error("❌ MySQL connection failed:", err.message);
   } else {
-    console.log("✅ MySQL Connected");
+    console.log("✅ MySQL connected");
+    connection.release();
   }
 });
 
-// ================== BASIC TEST ==================
-app.get("/", (req, res) => {
-  res.send("Backend is running");
+// ---------- BASIC ROUTE ----------
+app.get("/health", (req, res) => {
+  res.json({ status: "OK", message: "Backend running" });
 });
 
-// ================== PRODUCTS ==================
+// ---------- PRODUCTS ----------
 app.get("/products", (req, res) => {
   db.query(
     "SELECT id, display_name, unit, stock FROM products ORDER BY display_name",
     (err, rows) => {
-      if (err) return res.status(500).json(err);
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: "DB error" });
+      }
       res.json(rows);
     }
   );
 });
 
-// ================== PURCHASE ==================
+// ---------- PURCHASE ----------
 app.post("/purchase", (req, res) => {
   const { product_id, quantity, dealer_name } = req.body;
 
@@ -73,7 +78,7 @@ app.post("/purchase", (req, res) => {
   );
 });
 
-// ================== SALE ==================
+// ---------- SALE ----------
 app.post("/sale", (req, res) => {
   const { product_id, quantity, customer_name } = req.body;
 
@@ -103,111 +108,69 @@ app.post("/sale", (req, res) => {
   );
 });
 
-// ================== REPORT HELPERS ==================
-function productFilter(product_id) {
-  return product_id ? " AND pr.id = ?" : "";
-}
-
-// ================== DAILY REPORT ==================
+// ---------- REPORT: DAILY ----------
 app.get("/report/daily", (req, res) => {
-  const { product_id, type = "both" } = req.query;
-  const params = product_id ? [product_id] : [];
-
-  const purchasesQuery = `
-    SELECT pr.display_name, p.quantity, p.dealer_name, p.created_at
-    FROM purchases p
-    JOIN products pr ON p.product_id = pr.id
-    WHERE DATE(p.created_at) = CURDATE()
-    ${productFilter(product_id)}
-    ORDER BY p.created_at DESC
-  `;
-
-  const salesQuery = `
-    SELECT pr.display_name, s.quantity, s.customer_name, s.created_at
-    FROM sales s
-    JOIN products pr ON s.product_id = pr.id
-    WHERE DATE(s.created_at) = CURDATE()
-    ${productFilter(product_id)}
-    ORDER BY s.created_at DESC
-  `;
-
   const result = {};
 
-  const loadSales = () => {
-    if (type === "purchase") return res.json(result);
-    db.query(salesQuery, params, (err, rows) => {
-      if (err) return res.status(500).json(err);
-      result.sales = rows;
-      res.json(result);
-    });
-  };
-
-  if (type !== "sale") {
-    db.query(purchasesQuery, params, (err, rows) => {
+  db.query(
+    `SELECT pr.display_name, p.quantity, p.dealer_name, p.created_at
+     FROM purchases p JOIN products pr ON p.product_id = pr.id
+     WHERE DATE(p.created_at) = CURDATE()
+     ORDER BY p.created_at DESC`,
+    (err, rows) => {
       if (err) return res.status(500).json(err);
       result.purchases = rows;
-      loadSales();
-    });
-  } else {
-    result.purchases = [];
-    loadSales();
-  }
+
+      db.query(
+        `SELECT pr.display_name, s.quantity, s.customer_name, s.created_at
+         FROM sales s JOIN products pr ON s.product_id = pr.id
+         WHERE DATE(s.created_at) = CURDATE()
+         ORDER BY s.created_at DESC`,
+        (err2, rows2) => {
+          if (err2) return res.status(500).json(err2);
+          result.sales = rows2;
+          res.json(result);
+        }
+      );
+    }
+  );
 });
 
-// ================== MONTHLY REPORT ==================
+// ---------- REPORT: MONTHLY ----------
 app.get("/report/monthly", (req, res) => {
-  const { month, product_id, type = "both" } = req.query;
-
-  if (!month) {
-    return res.status(400).json({ message: "Month required (YYYY-MM)" });
-  }
-
-  const params = product_id ? [month, product_id] : [month];
-
-  const purchasesQuery = `
-    SELECT pr.display_name, p.quantity, p.dealer_name, p.created_at
-    FROM purchases p
-    JOIN products pr ON p.product_id = pr.id
-    WHERE DATE_FORMAT(p.created_at, '%Y-%m') = ?
-    ${productFilter(product_id)}
-    ORDER BY p.created_at DESC
-  `;
-
-  const salesQuery = `
-    SELECT pr.display_name, s.quantity, s.customer_name, s.created_at
-    FROM sales s
-    JOIN products pr ON s.product_id = pr.id
-    WHERE DATE_FORMAT(s.created_at, '%Y-%m') = ?
-    ${productFilter(product_id)}
-    ORDER BY s.created_at DESC
-  `;
+  const { month } = req.query;
+  if (!month) return res.status(400).json({ message: "Month required" });
 
   const result = {};
 
-  const loadSales = () => {
-    if (type === "purchase") return res.json(result);
-    db.query(salesQuery, params, (err, rows) => {
-      if (err) return res.status(500).json(err);
-      result.sales = rows;
-      res.json(result);
-    });
-  };
-
-  if (type !== "sale") {
-    db.query(purchasesQuery, params, (err, rows) => {
+  db.query(
+    `SELECT pr.display_name, p.quantity, p.dealer_name, p.created_at
+     FROM purchases p JOIN products pr ON p.product_id = pr.id
+     WHERE DATE_FORMAT(p.created_at,'%Y-%m') = ?
+     ORDER BY p.created_at DESC`,
+    [month],
+    (err, rows) => {
       if (err) return res.status(500).json(err);
       result.purchases = rows;
-      loadSales();
-    });
-  } else {
-    result.purchases = [];
-    loadSales();
-  }
+
+      db.query(
+        `SELECT pr.display_name, s.quantity, s.customer_name, s.created_at
+         FROM sales s JOIN products pr ON s.product_id = pr.id
+         WHERE DATE_FORMAT(s.created_at,'%Y-%m') = ?
+         ORDER BY s.created_at DESC`,
+        [month],
+        (err2, rows2) => {
+          if (err2) return res.status(500).json(err2);
+          result.sales = rows2;
+          res.json(result);
+        }
+      );
+    }
+  );
 });
 
-// ================== START SERVER (RAILWAY SAFE) ==================
+// ---------- START SERVER (RAILWAY SAFE) ----------
 const PORT = process.env.PORT || 4000;
-
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log("🚀 Server running on port", PORT);
 });
