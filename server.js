@@ -1,67 +1,75 @@
 const express = require("express");
-const mysql = require("mysql2");
-const path = require("path");
+const mysql = require("mysql2/promise");
 const cors = require("cors");
 
 const app = express();
+
+// ---------- BASIC MIDDLEWARE ----------
 app.use(cors());
 app.use(express.json());
 
-// ===== MYSQL CONNECTION =====
-const db = mysql.createPool({
-  host: process.env.MYSQLHOST,
-  user: process.env.MYSQLUSER,
-  password: process.env.MYSQLPASSWORD,
-  database: process.env.MYSQLDATABASE,
-  port: process.env.MYSQLPORT,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+// ---------- HEALTH CHECK ----------
+app.get("/", (req, res) => {
+  res.send("Backend is running");
 });
 
-// ===== DEBUG ROUTE =====
-app.get("/api/debug-db", (req, res) => {
-  res.json({
-    host: process.env.MYSQLHOST,
-    user: process.env.MYSQLUSER,
-    database: process.env.MYSQLDATABASE,
-    port: process.env.MYSQLPORT,
-    hasPassword: !!process.env.MYSQLPASSWORD
-  });
+// ---------- MYSQL CONNECTION ----------
+let db;
+
+async function connectDB() {
+  try {
+    db = await mysql.createPool({
+      host: process.env.MYSQLHOST,
+      user: process.env.MYSQLUSER,
+      password: process.env.MYSQLPASSWORD,
+      database: process.env.MYSQLDATABASE,
+      port: process.env.MYSQLPORT,
+      waitForConnections: true,
+      connectionLimit: 5,
+      queueLimit: 0
+    });
+
+    console.log("✅ MySQL connected");
+  } catch (err) {
+    console.error("❌ MySQL connection failed:", err.message);
+  }
+}
+
+connectDB();
+
+// ---------- DEBUG ROUTE ----------
+app.get("/api/debug-db", async (req, res) => {
+  try {
+    const [rows] = await db.query("SELECT 1");
+    res.json({ status: "DB OK" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ===== STOCK API =====
-app.get("/api/stock", (req, res) => {
-  const sql = `
-    SELECT 
-      p.id,
-      p.brand,
-      p.size,
-      p.unit,
-      s.quantity
-    FROM products p
-    JOIN stock s ON p.id = s.product_id
-    ORDER BY p.id;
-  `;
+// ---------- STOCK API ----------
+app.get("/api/stock", async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        p.brand,
+        p.size,
+        p.unit,
+        s.quantity AS stock
+      FROM products p
+      JOIN stock s ON p.id = s.product_id
+    `);
 
-  db.query(sql, (err, rows) => {
-    if (err) {
-      console.error("DB ERROR:", err);
-      return res.status(500).json({ error: "Database error" });
-    }
     res.json(rows);
-  });
+  } catch (err) {
+    console.error("❌ Stock API error:", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
-// ===== FRONTEND =====
-app.use(express.static(path.join(__dirname, "public")));
+// ---------- START SERVER ----------
+const PORT = process.env.PORT || 4000;
 
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-// ===== START SERVER =====
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
