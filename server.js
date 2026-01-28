@@ -1,28 +1,13 @@
-app.get("/api/debug-db", (req, res) => {
-  res.json({
-    host: process.env.MYSQLHOST,
-    user: process.env.MYSQLUSER,
-    database: process.env.MYSQLDATABASE,
-    port: process.env.MYSQLPORT,
-    hasPassword: !!process.env.MYSQLPASSWORD
-  });
-});
-
 const express = require("express");
 const mysql = require("mysql2");
 const path = require("path");
+const cors = require("cors");
 
 const app = express();
-
-// =============================
-// Middleware
-// =============================
+app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
 
-// =============================
-// MySQL Connection (Railway)
-// =============================
+// ===== MYSQL CONNECTION =====
 const db = mysql.createPool({
   host: process.env.MYSQLHOST,
   user: process.env.MYSQLUSER,
@@ -34,52 +19,49 @@ const db = mysql.createPool({
   queueLimit: 0
 });
 
-// Test DB connection
-db.getConnection((err, connection) => {
-  if (err) {
-    console.error("❌ MySQL Connection Failed:", err);
-  } else {
-    console.log("✅ MySQL Connected Successfully");
-    connection.release();
-  }
+// ===== DEBUG ROUTE =====
+app.get("/api/debug-db", (req, res) => {
+  res.json({
+    host: process.env.MYSQLHOST,
+    user: process.env.MYSQLUSER,
+    database: process.env.MYSQLDATABASE,
+    port: process.env.MYSQLPORT,
+    hasPassword: !!process.env.MYSQLPASSWORD
+  });
 });
 
-// =============================
-// API: Get Stock (IMPORTANT)
-// =============================
+// ===== STOCK API =====
 app.get("/api/stock", (req, res) => {
-  const query = `
+  const sql = `
     SELECT 
       p.id,
       p.brand,
       p.size,
       p.unit,
-      s.quantity AS stock
+      s.quantity
     FROM products p
-    LEFT JOIN stock s ON p.id = s.product_id
+    JOIN stock s ON p.id = s.product_id
     ORDER BY p.id;
   `;
 
-  db.query(query, (err, results) => {
+  db.query(sql, (err, rows) => {
     if (err) {
-      console.error("❌ Database Query Error:", err);
+      console.error("DB ERROR:", err);
       return res.status(500).json({ error: "Database error" });
     }
-    res.json(results);
+    res.json(rows);
   });
 });
 
-// =============================
-// Serve Frontend
-// =============================
-app.get("/", (req, res) => {
+// ===== FRONTEND =====
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// =============================
-// Start Server (Railway)
-// =============================
+// ===== START SERVER =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log("Server running on port", PORT);
 });

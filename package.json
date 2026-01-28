@@ -1,15 +1,15 @@
 {
   "name": "building-stock-app",
   "version": "1.0.0",
-  "description": "Stock management app",
+  "description": "",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "type": "commonjs",
   "dependencies": {
+    "body-parser": "^1.20.2",
     "cors": "^2.8.5",
-    "express": "^5.2.1",
-    "mysql2": "^3.16.1"
+    "express": "^4.18.2",
+    "mysql2": "^3.6.0"
   }
 }
