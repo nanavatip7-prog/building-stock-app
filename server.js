@@ -1,53 +1,50 @@
 const express = require("express");
 const mysql = require("mysql2/promise");
 const cors = require("cors");
+const path = require("path");
 
 const app = express();
-
-// ---------- BASIC MIDDLEWARE ----------
 app.use(cors());
 app.use(express.json());
 
-// ---------- HEALTH CHECK ----------
-app.get("/", (req, res) => {
-  res.send("Backend is running");
-});
-
-// ---------- MYSQL CONNECTION ----------
+// ----------------------
+// MySQL Connection
+// ----------------------
 let db;
 
-async function connectDB() {
+(async () => {
   try {
-    db = await mysql.createPool({
-      host: process.env.MYSQLHOST,
-      user: process.env.MYSQLUSER,
-      password: process.env.MYSQLPASSWORD,
-      database: process.env.MYSQLDATABASE,
-      port: process.env.MYSQLPORT,
-      waitForConnections: true,
-      connectionLimit: 5,
-      queueLimit: 0
-    });
-
+    db = await mysql.createPool(process.env.MYSQL_URL);
     console.log("✅ MySQL connected");
   } catch (err) {
-    console.error("❌ MySQL connection failed:", err.message);
+    console.error("❌ MySQL connection failed:", err);
   }
-}
+})();
 
-connectDB();
+// ----------------------
+// Serve frontend
+// ----------------------
+app.use(express.static(path.join(__dirname, "public")));
 
-// ---------- DEBUG ROUTE ----------
+// ----------------------
+// DEBUG DB
+// ----------------------
 app.get("/api/debug-db", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT 1");
-    res.json({ status: "DB OK" });
+    const [rows] = await db.query("SELECT 1 AS ok");
+    res.json({ status: "DB OK", rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("DEBUG DB ERROR:", err);
+    res.status(500).json({
+      error: err.message,
+      code: err.code
+    });
   }
 });
 
-// ---------- STOCK API ----------
+// ----------------------
+// STOCK API
+// ----------------------
 app.get("/api/stock", async (req, res) => {
   try {
     const [rows] = await db.query(`
@@ -57,19 +54,22 @@ app.get("/api/stock", async (req, res) => {
         p.unit,
         s.quantity AS stock
       FROM products p
-      JOIN stock s ON p.id = s.product_id
+      INNER JOIN stock s
+        ON p.id = s.product_id
     `);
 
     res.json(rows);
   } catch (err) {
-    console.error("❌ Stock API error:", err.message);
-    res.status(500).json({ error: "Database error" });
+    console.error("STOCK QUERY ERROR:", err);
+    res.status(500).json({
+      error: err.message,
+      code: err.code
+    });
   }
 });
 
-// ---------- START SERVER ----------
+// ----------------------
 const PORT = process.env.PORT || 4000;
-
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log("🚀 Server running on port", PORT);
 });
