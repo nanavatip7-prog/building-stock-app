@@ -1,14 +1,17 @@
 {
   "name": "building-stock-app",
   "version": "1.0.0",
+  "description": "Stock Management System",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "mysql2": "^3.6.0",
-    "body-parser": "^1.20.2"
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "mysql2": "^3.16.1"
   }
 }
