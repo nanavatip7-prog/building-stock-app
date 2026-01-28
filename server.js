@@ -1,75 +1,36 @@
-const express = require("express");
-const mysql = require("mysql2/promise");
-const cors = require("cors");
-const path = require("path");
+app.post("/api/purchase", async (req, res) => {
+  const { product_id, quantity, dealer_name } = req.body;
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-// ----------------------
-// MySQL Connection
-// ----------------------
-let db;
-
-(async () => {
-  try {
-    db = await mysql.createPool(process.env.MYSQL_URL);
-    console.log("✅ MySQL connected");
-  } catch (err) {
-    console.error("❌ MySQL connection failed:", err);
+  if (!product_id || !quantity || quantity <= 0) {
+    return res.status(400).json({ error: "Invalid input" });
   }
-})();
 
-// ----------------------
-// Serve frontend
-// ----------------------
-app.use(express.static(path.join(__dirname, "public")));
+  const conn = await pool.getConnection();
 
-// ----------------------
-// DEBUG DB
-// ----------------------
-app.get("/api/debug-db", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT 1 AS ok");
-    res.json({ status: "DB OK", rows });
+    await conn.beginTransaction();
+
+    // 1️⃣ Insert transaction
+    await conn.query(
+      `INSERT INTO transactions (product_id, type, quantity, dealer_name)
+       VALUES (?, 'purchase', ?, ?)`,
+      [product_id, quantity, dealer_name || null]
+    );
+
+    // 2️⃣ Update stock
+    await conn.query(
+      `UPDATE stock SET quantity = quantity + ?
+       WHERE product_id = ?`,
+      [quantity, product_id]
+    );
+
+    await conn.commit();
+    res.json({ success: true });
   } catch (err) {
-    console.error("DEBUG DB ERROR:", err);
-    res.status(500).json({
-      error: err.message,
-      code: err.code
-    });
+    await conn.rollback();
+    console.error("Purchase error:", err);
+    res.status(500).json({ error: "Database error" });
+  } finally {
+    conn.release();
   }
-});
-
-// ----------------------
-// STOCK API
-// ----------------------
-app.get("/api/stock", async (req, res) => {
-  try {
-    const [rows] = await db.query(`
-      SELECT 
-        p.brand,
-        p.size,
-        p.unit,
-        s.quantity AS stock
-      FROM products p
-      INNER JOIN stock s
-        ON p.id = s.product_id
-    `);
-
-    res.json(rows);
-  } catch (err) {
-    console.error("STOCK QUERY ERROR:", err);
-    res.status(500).json({
-      error: err.message,
-      code: err.code
-    });
-  }
-});
-
-// ----------------------
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
 });
