@@ -1,3 +1,5 @@
+console.log("🔥 ACTIVE server.js loaded");
+
 const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
@@ -6,17 +8,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ⭐ Serve frontend (index.html must be inside /public)
+// ================== SERVE FRONTEND ==================
 app.use(express.static("public"));
 
-// ---------------- AUTO OPEN BROWSER (Node v24 SAFE) ----------------
-let openBrowser;
-(async () => {
-  const open = await import("open");
-  openBrowser = open.default;
-})();
+// ================== DATABASE CONFIG ==================
+// ⚠️ For now this still points to local DB (OK for testing)
+// Later we will move this to Railway MySQL
 
-// ---------------- DATABASE CONNECTION ----------------
 const db = mysql.createConnection({
   host: "localhost",
   user: "root",
@@ -24,15 +22,21 @@ const db = mysql.createConnection({
   database: "stockdb"
 });
 
+// ⚠️ DO NOT crash server if DB fails
 db.connect(err => {
   if (err) {
-    console.error("❌ MySQL Error:", err.message);
-    return;
+    console.error("❌ MySQL connection failed (app still running)");
+  } else {
+    console.log("✅ MySQL Connected");
   }
-  console.log("✅ MySQL Connected");
 });
 
-// ---------------- PRODUCTS ----------------
+// ================== BASIC TEST ==================
+app.get("/", (req, res) => {
+  res.send("Backend is running");
+});
+
+// ================== PRODUCTS ==================
 app.get("/products", (req, res) => {
   db.query(
     "SELECT id, display_name, unit, stock FROM products ORDER BY display_name",
@@ -43,7 +47,7 @@ app.get("/products", (req, res) => {
   );
 });
 
-// ---------------- PURCHASE (खरेदी) ----------------
+// ================== PURCHASE ==================
 app.post("/purchase", (req, res) => {
   const { product_id, quantity, dealer_name } = req.body;
 
@@ -69,7 +73,7 @@ app.post("/purchase", (req, res) => {
   );
 });
 
-// ---------------- SALE (विक्री) ----------------
+// ================== SALE ==================
 app.post("/sale", (req, res) => {
   const { product_id, quantity, customer_name } = req.body;
 
@@ -99,12 +103,12 @@ app.post("/sale", (req, res) => {
   );
 });
 
-// ---------------- FILTER HELPER ----------------
+// ================== REPORT HELPERS ==================
 function productFilter(product_id) {
   return product_id ? " AND pr.id = ?" : "";
 }
 
-// ---------------- DAILY REPORT ----------------
+// ================== DAILY REPORT ==================
 app.get("/report/daily", (req, res) => {
   const { product_id, type = "both" } = req.query;
   const params = product_id ? [product_id] : [];
@@ -150,7 +154,7 @@ app.get("/report/daily", (req, res) => {
   }
 });
 
-// ---------------- MONTHLY REPORT ----------------
+// ================== MONTHLY REPORT ==================
 app.get("/report/monthly", (req, res) => {
   const { month, product_id, type = "both" } = req.query;
 
@@ -201,11 +205,9 @@ app.get("/report/monthly", (req, res) => {
   }
 });
 
-// ---------------- START SERVER ----------------
-app.listen(4000, () => {
-  console.log("🚀 Server running on http://localhost:4000");
+// ================== START SERVER (RAILWAY SAFE) ==================
+const PORT = process.env.PORT || 4000;
 
-  if (openBrowser) {
-    openBrowser("http://localhost:4000");
-  }
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
