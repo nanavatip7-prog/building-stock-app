@@ -1,36 +1,57 @@
-app.post("/api/purchase", async (req, res) => {
-  const { product_id, quantity, dealer_name } = req.body;
+const express = require("express");
+const mysql = require("mysql2/promise");
+const path = require("path");
 
-  if (!product_id || !quantity || quantity <= 0) {
-    return res.status(400).json({ error: "Invalid input" });
-  }
+const app = express();
+app.use(express.json());
 
-  const conn = await pool.getConnection();
+// ====== DATABASE CONNECTION ======
+let db;
 
+async function connectDB() {
   try {
-    await conn.beginTransaction();
-
-    // 1️⃣ Insert transaction
-    await conn.query(
-      `INSERT INTO transactions (product_id, type, quantity, dealer_name)
-       VALUES (?, 'purchase', ?, ?)`,
-      [product_id, quantity, dealer_name || null]
-    );
-
-    // 2️⃣ Update stock
-    await conn.query(
-      `UPDATE stock SET quantity = quantity + ?
-       WHERE product_id = ?`,
-      [quantity, product_id]
-    );
-
-    await conn.commit();
-    res.json({ success: true });
+    db = await mysql.createPool({
+      uri: process.env.MYSQL_URL,
+      waitForConnections: true,
+      connectionLimit: 5,
+    });
+    console.log("✅ MySQL connected");
   } catch (err) {
-    await conn.rollback();
-    console.error("Purchase error:", err);
-    res.status(500).json({ error: "Database error" });
-  } finally {
-    conn.release();
+    console.error("❌ DB connection failed:", err);
+    process.exit(1);
   }
+}
+
+connectDB();
+
+// ====== API ======
+app.get("/api/stock", async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        p.brand,
+        p.size,
+        p.unit,
+        s.quantity AS stock
+      FROM products p
+      JOIN stock s ON p.id = s.product_id
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Stock API error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// ====== STATIC FILES ======
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public/index.html"));
+});
+
+// ====== START SERVER (CRITICAL) ======
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
