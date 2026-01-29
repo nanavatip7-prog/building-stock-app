@@ -4,100 +4,52 @@ const mysql = require("mysql2");
 const path = require("path");
 
 const app = express();
-
-/* ===============================
-   CONFIG
-================================ */
-const PORT = process.env.PORT || 4000;
-
-/* ===============================
-   MIDDLEWARE
-================================ */
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
 
-/* ===============================
-   MYSQL CONNECTION
-================================ */
-const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
-});
+// ✅ CONNECT USING MYSQL_URL (Railway way)
+const db = mysql.createPool(process.env.MYSQL_URL);
 
-db.connect(err => {
+db.getConnection((err, conn) => {
   if (err) {
     console.error("❌ MySQL connection failed:", err.message);
-    return;
+  } else {
+    console.log("✅ MySQL connected");
+    conn.release();
   }
-  console.log("✅ MySQL connected");
 });
 
-/* ===============================
-   HEALTH CHECK
-================================ */
+// ---------- API ROUTES ----------
+
+// Health check
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  res.send("Server is alive");
 });
 
-/* ===============================
-   GET PRODUCTS (for dropdowns)
-================================ */
-app.get("/api/products", (req, res) => {
+// STOCK
+app.get("/api/stock", (req, res) => {
   const sql = `
     SELECT 
-      id,
-      COALESCE(name_mr, display_name) AS name
-    FROM products
-    ORDER BY id
-  `;
-  db.query(sql, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
-
-/* ===============================
-   STOCK (with brand filter)
-================================ */
-app.get("/api/stock", (req, res) => {
-  const { product_id } = req.query;
-
-  let sql = `
-    SELECT
       p.id,
       COALESCE(p.name_mr, p.display_name) AS product,
       p.unit,
       IFNULL(s.quantity, 0) AS stock
     FROM products p
     LEFT JOIN stock s ON s.product_id = p.id
+    ORDER BY p.id
   `;
 
-  const params = [];
-
-  if (product_id) {
-    sql += " WHERE p.id = ?";
-    params.push(product_id);
-  }
-
-  sql += " ORDER BY p.id";
-
-  db.query(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  db.query(sql, (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Database error" });
+    }
     res.json(rows);
   });
 });
 
-/* ===============================
-   PURCHASE (stock IN)
-================================ */
+// PURCHASE (increase stock)
 app.post("/api/purchase", (req, res) => {
   const { product_id, quantity, dealer_name } = req.body;
-
-  if (!product_id || !quantity || !dealer_name) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
 
   const insertPurchase = `
     INSERT INTO purchases (product_id, quantity, dealer_name)
@@ -111,93 +63,70 @@ app.post("/api/purchase", (req, res) => {
   `;
 
   db.query(insertPurchase, [product_id, quantity, dealer_name], err => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) return res.status(500).json({ error: "Database error" });
 
     db.query(updateStock, [product_id, quantity], err2 => {
-      if (err2) return res.status(500).json({ error: err2.message });
+      if (err2) return res.status(500).json({ error: "Database error" });
       res.json({ success: true });
     });
   });
 });
 
-/* ===============================
-   SALE (stock OUT)
-================================ */
+// SALE (decrease stock)
 app.post("/api/sale", (req, res) => {
   const { product_id, quantity, customer_name } = req.body;
-
-  if (!product_id || !quantity || !customer_name) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
 
   const insertSale = `
     INSERT INTO sales (product_id, quantity, customer_name)
     VALUES (?, ?, ?)
   `;
 
-  const reduceStock = `
-    UPDATE stock
-    SET quantity = quantity - ?
-    WHERE product_id = ? AND quantity >= ?
+  const updateStock = `
+    UPDATE stock SET quantity = quantity - ?
+    WHERE product_id = ?
   `;
 
   db.query(insertSale, [product_id, quantity, customer_name], err => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) return res.status(500).json({ error: "Database error" });
 
-    db.query(reduceStock, [quantity, product_id, quantity], (err2, result) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-
-      if (result.affectedRows === 0) {
-        return res.status(400).json({ error: "Insufficient stock" });
-      }
-
+    db.query(updateStock, [quantity, product_id], err2 => {
+      if (err2) return res.status(500).json({ error: "Database error" });
       res.json({ success: true });
     });
   });
 });
 
-/* ===============================
-   REPORTS (daily / monthly + brand filter)
-================================ */
+// REPORTS
 app.get("/api/report/:type", (req, res) => {
   const { type } = req.params;
-  const { month, product_id } = req.query;
+  const { month } = req.query;
 
-  const table = type === "sale" ? "sales" : "purchases";
+  let table = type === "purchase" ? "purchases" : "sales";
 
   let sql = `
-    SELECT
+    SELECT 
+      t.created_at,
       COALESCE(p.name_mr, p.display_name) AS product,
       t.quantity,
-      t.created_at
+      ${type === "purchase" ? "t.dealer_name" : "t.customer_name"} AS person
     FROM ${table} t
     JOIN products p ON p.id = t.product_id
-    WHERE 1=1
   `;
 
-  const params = [];
-
   if (month) {
-    sql += " AND DATE_FORMAT(t.created_at, '%Y-%m') = ?";
-    params.push(month);
+    sql += ` WHERE DATE_FORMAT(t.created_at, '%Y-%m') = ?`;
   }
 
-  if (product_id) {
-    sql += " AND p.id = ?";
-    params.push(product_id);
-  }
-
-  sql += " ORDER BY t.created_at DESC";
-
-  db.query(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  db.query(sql, month ? [month] : [], (err, rows) => {
+    if (err) return res.status(500).json({ error: "Database error" });
     res.json(rows);
   });
 });
 
-/* ===============================
-   START SERVER
-================================ */
+// ---------- FRONTEND ----------
+app.use(express.static(path.join(__dirname, "public")));
+
+const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
